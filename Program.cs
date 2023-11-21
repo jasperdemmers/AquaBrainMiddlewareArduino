@@ -26,6 +26,7 @@ class Program {
         using (SerialPort port = new SerialPort("/dev/cu.usbserial-2130"))
         {
             port.ReadTimeout = 5000;
+            port.BaudRate = 9600;
             try
             {
                 port.Open();
