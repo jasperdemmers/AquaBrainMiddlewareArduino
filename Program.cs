@@ -10,6 +10,7 @@ class Program {
     static readonly HttpClient client = new HttpClient();
     static string username;
     static string password;
+    static bool previousState = false;
     static readonly string sensorApi = "http://192.168.154.23/api/Sensor/data";
     static readonly string valveApi = "http://192.168.154.23/api/Valve/722/1";
 
@@ -24,44 +25,89 @@ class Program {
 
         using (SerialPort port = new SerialPort("/dev/cu.usbserial-2130"))
         {
-            port.Open();
-            while (true)
+            port.ReadTimeout = 5000;
+            try
             {
-                string serialData = port.ReadLine();
-                if (int.TryParse(serialData, out int serialNumber))
+                port.Open();
+                while (true)
                 {
-                    await SendToSensorApi(serialNumber);
-                    await ListenToValveApi(port);
+                    try {
+                        string serialData = port.ReadLine();
+                        if (int.TryParse(serialData, out int serialNumber))
+                        {
+                            await SendToSensorApi(serialNumber);
+                            await ListenToValveApi(port);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Invalid data received: {serialData}");
+                        }
+                    } catch (TimeoutException) {
+                        Console.WriteLine("Read from serial port timed out.");
+                    }
                 }
-                else
+            }
+            catch (IOException e)
+            {
+                Console.WriteLine($"Serial port disconnected: {e.Message}");
+                if (port.IsOpen)
                 {
-                    Console.WriteLine($"Invalid data received: {serialData}");
+                    port.Close();
                 }
+                await Task.Delay(TimeSpan.FromSeconds(10));
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                Console.WriteLine($"Access to serial port denied: {e.Message}");
+                if (port.IsOpen)
+                {
+                    port.Close();
+                }
+                await Task.Delay(TimeSpan.FromSeconds(10));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Error: {e.Message}");
+                await Task.Delay(TimeSpan.FromSeconds(10));
             }
         }
     }
 
     static async Task SendToSensorApi(int serialData)
     {
-        var payload = new
-        {
-            watertonId = 722,
-            sensorID = 1,
-            waarde = serialData,
-            type = "waterniveau"
-        };
-        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        await client.PostAsync(sensorApi, content);
+        try {
+            var payload = new
+            {
+                watertonId = 722,
+                sensorID = 1,
+                waarde = serialData,
+                type = "waterniveau"
+            };
+            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            await client.PostAsync(sensorApi, content);
+        } catch (Exception e) {
+            Console.WriteLine($"Error in SendToSensorApi: {e.Message}");
+        }
     }
 
     static async Task ListenToValveApi(SerialPort port)
     {
-        var response = await client.GetAsync(valveApi);
-        var data = JsonSerializer.Deserialize<ValveData>(await response.Content.ReadAsStringAsync());
-        if (data.open) {
-            port.WriteLine("on");
-        } else {
-            port.WriteLine("off");
+        try {
+            var response = await client.GetAsync(valveApi);
+            var data = JsonSerializer.Deserialize<ValveData>(await response.Content.ReadAsStringAsync());
+            if (data.open != previousState)
+            {
+                if (data.open) {
+                    port.WriteLine("on");
+                    Console.WriteLine("Valve opened");
+                } else {
+                    port.WriteLine("off");
+                    Console.WriteLine("Valve closed");
+                }
+                previousState = data.open;
+            }
+        } catch (Exception e) {
+            Console.WriteLine($"Error in ListenToValveApi: {e.Message}");
         }
     }
 }
